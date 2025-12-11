@@ -1,0 +1,14 @@
+[build]
+target = "thumbv7em-none-eabi"
+
+[target.thumbv7em-none-eabi]
+runner = "qemu-system-arm -cpu cortex-m4 -machine netduinoplus2 -nographic -semihosting-config enable=on,target=native -kernel"
+
+[profile.dev]
+opt-level = "s"
+
+[profile.release]
+debug = 2
+
+[env]
+DEFMT_LOG = "info"

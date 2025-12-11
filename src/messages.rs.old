@@ -1,0 +1,275 @@
+// Coin Pusher 协议消息定义
+use heapless::{String, Vec};
+use serde::{Deserialize, Serialize};
+
+// 最大容量常量
+pub const MAX_BUTTONS: usize = 16;
+pub const MAX_LIGHTS: usize = 16;
+pub const MAX_MOTORS: usize = 6;
+pub const MAX_LIGHT_COMMANDS: usize = 16;
+pub const MAX_FAULTS: usize = 8;
+pub const MAX_STRING_LEN: usize = 64;
+pub const MAX_CHANGED_FIELDS: usize = 32;
+
+//====================================
+// 命令码定义
+//====================================
+
+// STM32 -> 客户端
+pub const CMD_HEARTBEAT: u16 = 1001;
+pub const CMD_STATUS_REPORT: u16 = 1002;
+pub const CMD_BUTTON_EVENT: u16 = 1003;
+pub const CMD_COIN_IN_EVENT: u16 = 1004;
+pub const CMD_PAYOUT_COUNT_EVENT: u16 = 1005;
+pub const CMD_FAULT_EVENT: u16 = 1006;
+pub const CMD_COMMAND_RESULT: u16 = 1007;
+
+// 客户端 -> STM32
+pub const CMD_REQUEST_STATUS: u16 = 2001;
+pub const CMD_LIGHT_COMMAND: u16 = 2002;
+pub const CMD_MOTOR_COMMAND: u16 = 2003;
+pub const CMD_CLEAR_FAULT: u16 = 2004;
+pub const CMD_SIMULATE_FAULT: u16 = 2005;
+
+//====================================
+// 枚举定义
+//====================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum MotorType {
+    Unknown = 1,
+    Pusher = 2,    // 推盘马达
+    Feed = 3,      // 上币马达
+    Payout = 4,    // 回币马达
+    Refund = 5,    // 退币马达
+    Ticket = 6,    // 彩票机
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum MotorCommandType {
+    Unknown = 1,
+    Start = 2,      // 连续运行
+    Stop = 3,       // 停止
+    RunTime = 4,    // 运行指定时间
+    RunCount = 5,   // 运行指定数量
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum BoolFlag {
+    True = 1,
+    False = 2,
+}
+
+impl BoolFlag {
+    pub fn from_bool(b: bool) -> Self {
+        if b { BoolFlag::True } else { BoolFlag::False }
+    }
+
+    pub fn to_bool(self) -> bool {
+        matches!(self, BoolFlag::True)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum HardwareType {
+    Unknown = 1,
+    CoinAcceptor = 2,
+    Button = 3,
+    Light = 4,
+    MotorPusher = 5,
+    MotorFeed = 6,
+    MotorPayout = 7,
+    MotorRefund = 8,
+    TicketMachine = 9,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum FaultCode {
+    Unspecified = 1,
+    CoinJam = 2,
+    OverTemp = 3,
+    DoorOpen = 4,
+    SensorFail = 5,
+    TicketEmpty = 6,
+    MotorStall = 7,
+    MotorOverload = 8,
+    NoResource = 9,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum FaultSeverity {
+    Info = 1,
+    Warn = 2,
+    Error = 3,
+    Fatal = 4,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum ChangeField {
+    Unknown = 1,
+    Buttons = 2,
+    Lights = 3,
+    Motors = 4,
+    Faults = 5,
+    Counter = 6,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, defmt::Format)]
+#[repr(u8)]
+pub enum ButtonAction {
+    Unknown = 1,
+    Pressed = 2,
+    Released = 3,
+}
+
+//====================================
+// 共享结构体
+//====================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ButtonState {
+    pub button_id: u32,
+    pub pressed: BoolFlag,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightState {
+    pub light_id: u32,
+    pub on: BoolFlag,
+    pub pattern: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotorStatus {
+    pub motor_type: MotorType,
+    pub running: BoolFlag,
+    pub remaining_ms: Option<u32>,
+    pub remaining_count: Option<u32>,
+    pub speed_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SingleLightCommand {
+    pub light_id: u32,
+    pub on: BoolFlag,
+    pub pattern: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulatedFault {
+    pub hardware_type: HardwareType,
+    pub hardware_id: Option<u32>,
+    pub severity: FaultSeverity,
+    pub fault_code: Option<u32>,
+    pub message: Option<String<MAX_STRING_LEN>>,
+    pub fault: Option<FaultCode>,
+}
+
+//====================================
+// STM32 -> 客户端消息 (toc)
+//====================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Heartbeat {
+    pub uptime_ms: u32,
+    pub all_ok: BoolFlag,
+    pub error_count: u32,
+    pub state_version: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusReport {
+    pub buttons: Vec<ButtonState, MAX_BUTTONS>,
+    pub lights: Vec<LightState, MAX_LIGHTS>,
+    pub motors: Vec<MotorStatus, MAX_MOTORS>,
+    pub is_full_snapshot: BoolFlag,
+    pub state_version: u64,
+    pub change_mask: Option<u64>,
+    pub changed_fields: Vec<String<MAX_STRING_LEN>, MAX_CHANGED_FIELDS>,
+    pub changed_categories: Vec<ChangeField, MAX_CHANGED_FIELDS>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ButtonEvent {
+    pub button_id: u32,
+    pub action: ButtonAction,
+    pub duration_ms: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoinInEvent {
+    pub channel_id: u32,
+    pub coin_value: Option<u32>,
+    pub quantity: u32,
+    pub total: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PayoutCountEvent {
+    pub delta: u32,
+    pub total: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FaultEvent {
+    pub hardware_type: HardwareType,
+    pub hardware_id: Option<u32>,
+    pub severity: FaultSeverity,
+    pub fault_code: Option<u32>,
+    pub message: Option<String<MAX_STRING_LEN>>,
+    pub state_version: Option<u64>,
+    pub fault: Option<FaultCode>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandResult {
+    pub seq: u32,
+    pub ok: BoolFlag,
+    pub error_code: Option<u32>,
+    pub message: Option<String<MAX_STRING_LEN>>,
+    pub state_version: Option<u64>,
+}
+
+//====================================
+// 客户端 -> STM32 消息 (tos)
+//====================================
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestStatus {
+    pub full: Option<BoolFlag>,
+    pub subscribe_changes: Option<BoolFlag>,
+    pub min_interval_ms: Option<u32>,
+    pub send_full_on_subscribe: Option<BoolFlag>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LightCommand {
+    pub lights: Vec<SingleLightCommand, MAX_LIGHT_COMMANDS>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MotorCommand {
+    pub motor_type: MotorType,
+    pub command: MotorCommandType,
+    pub duration_ms: Option<u32>,
+    pub count: Option<u32>,
+    pub speed_level: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClearFault {
+    pub hardware_type: Option<HardwareType>,
+    pub hardware_id: Option<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimulateFault {
+    pub faults: Vec<SimulatedFault, MAX_FAULTS>,
+}

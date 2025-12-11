@@ -1,5 +1,4 @@
-// 命令路由器
-use super::{events::TcpEvent, tcp_server::TcpEventChannel};
+// 命令路由器（简化版）
 use crate::error::Result;
 use defmt::{info, warn};
 use heapless::Vec;
@@ -7,8 +6,8 @@ use heapless::Vec;
 /// 路由器最大路由数量
 const MAX_ROUTES: usize = 32;
 
-/// 命令处理器函数指针类型
-pub type HandlerFn = fn(Vec<u8, 512>, &'static TcpEventChannel) -> Result<Vec<u8, 512>>;
+/// 命令处理器函数指针类型（简化，无需 event channel）
+pub type HandlerFn = fn(Vec<u8, 512>) -> Result<Vec<u8, 512>>;
 
 /// 路由条目
 struct Route {
@@ -37,18 +36,17 @@ impl Router {
         self
     }
 
-    /// 处理消息
-    pub async fn handle_message(
+    /// 处理消息（简化版，移除 event channel）
+    pub fn handle_message(
         &self,
         cmd: u16,
         data: Vec<u8, 512>,
-        event_channel: &'static TcpEventChannel,
     ) -> Result<Vec<u8, 512>> {
         // 查找对应的处理器
         for route in self.routes.iter() {
             if route.cmd == cmd {
                 info!("Routing cmd {} to handler", cmd);
-                return (route.handler)(data, event_channel);
+                return (route.handler)(data);
             }
         }
 
@@ -64,10 +62,7 @@ impl Default for Router {
 }
 
 // 示例处理器
-pub fn example_handler(
-    data: Vec<u8, 512>,
-    _event_channel: &'static TcpEventChannel,
-) -> Result<Vec<u8, 512>> {
+pub fn example_handler(data: Vec<u8, 512>) -> Result<Vec<u8, 512>> {
     info!("Example handler called with {} bytes", data.len());
     // 简单地回显数据
     Ok(data)

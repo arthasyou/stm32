@@ -1,0 +1,249 @@
+syntax = "proto2";
+
+package coinpusher.v1;
+
+//=============================================================
+// @name coin_pusher STM32 接口 (示例 Cmd 映射)
+// 1001_toc 心跳
+// 1002_toc 状态/快照（增量或全量）
+// 1003_toc 按钮事件
+// 1004_toc 投币事件
+// 1005_toc 回币计数事件
+// 1006_toc 故障事件
+// 1007_toc 命令执行结果
+// 2001_tos 请求/订阅状态
+// 2002_tos 灯光控制
+// 2003_tos 马达控制（上币/推币/退币等）
+// 2004_tos 故障清除
+// 2005_tos 模拟故障注入
+//=============================================================
+
+//====================================
+// 公共枚举 / 类型
+//====================================
+
+enum MotorType {
+  MOTOR_TYPE_UNKNOWN   = 1;
+  MOTOR_TYPE_PUSHER    = 2; // 推盘马达
+  MOTOR_TYPE_FEED      = 3; // 上币马达（从上方掉落）
+  MOTOR_TYPE_PAYOUT    = 4; // 回币马达（统计玩家获得）
+  MOTOR_TYPE_REFUND    = 5; // 退币马达（玩家退币）
+  MOTOR_TYPE_TICKET    = 6; // 彩票机
+}
+
+enum MotorCommandType {
+  MOTOR_CMD_UNKNOWN    = 1;
+  MOTOR_CMD_START      = 2; // 连续运行（直到 STOP）
+  MOTOR_CMD_STOP       = 3; // 停止
+  MOTOR_CMD_RUN_TIME   = 4; // 运行指定时间（ms）
+  MOTOR_CMD_RUN_COUNT  = 5; // 运行指定数量（币数/步数）
+}
+
+// 使用 int 代替 bool，避免 0 值歧义：1=true/开，2=false/关
+enum BoolFlag {
+  BOOL_TRUE   = 1; // 使用 1/2，避免 0 值歧义
+  BOOL_FALSE  = 2;
+}
+
+enum HardwareType {
+  HW_UNKNOWN           = 1;
+  HW_COIN_ACCEPTOR     = 2;  // 投币器
+  HW_BUTTON            = 3;  // 按钮
+  HW_LIGHT             = 4;  // 灯
+  HW_MOTOR_PUSHER      = 5;  // 推盘马达
+  HW_MOTOR_FEED        = 6;  // 上币马达
+  HW_MOTOR_PAYOUT      = 7;  // 回币马达
+  HW_MOTOR_REFUND      = 8;  // 退币马达
+  HW_TICKET_MACHINE    = 9;  // 彩票机
+}
+
+// 标准化故障码（与硬件类型组合使用）
+enum FaultCode {
+  FAULT_CODE_UNSPECIFIED    = 1;
+  FAULT_CODE_COIN_JAM       = 2; // 卡币/堵塞
+  FAULT_CODE_OVER_TEMP      = 3; // 过温
+  FAULT_CODE_DOOR_OPEN      = 4; // 门开
+  FAULT_CODE_SENSOR_FAIL    = 5; // 传感器异常
+  FAULT_CODE_TICKET_EMPTY   = 6; // 彩票机缺纸/缺料
+  FAULT_CODE_MOTOR_STALL    = 7; // 马达堵转/卡死
+  FAULT_CODE_MOTOR_OVERLOAD = 8; // 马达过载
+  FAULT_CODE_NO_RESOURCE    = 9; // 币/票不足
+}
+
+enum FaultSeverity {
+  FAULT_SEVERITY_INFO    = 1; // 信息
+  FAULT_SEVERITY_WARN    = 2; // 警告
+  FAULT_SEVERITY_ERROR   = 3; // 错误（但设备还能部分工作）
+  FAULT_SEVERITY_FATAL   = 4; // 致命（需要停机）
+}
+
+// 变更类别，用于状态增量标识
+enum ChangeField {
+  CHANGE_FIELD_UNKNOWN = 1;
+  CHANGE_FIELD_BUTTONS = 2; // 按钮状态
+  CHANGE_FIELD_LIGHTS  = 3; // 灯光
+  CHANGE_FIELD_MOTORS  = 4; // 马达状态
+  CHANGE_FIELD_FAULTS  = 5; // 故障列表
+  CHANGE_FIELD_COUNTER = 6; // 计数/回币累计
+}
+
+enum ButtonAction {
+  BUTTON_ACTION_UNKNOWN  = 1;
+  BUTTON_PRESSED         = 2; // 按下
+  BUTTON_RELEASED        = 3; // 抬起
+}
+
+//====================================
+// STM32 -> 客户端 (toc)
+//====================================
+
+// @name heartbeat
+// @cmd 1001
+message m_1001_toc {
+  required uint32 uptime_ms     = 1; // MCU 开机时间（毫秒）
+  required BoolFlag all_ok      = 2; // 是否整体无故障（1=OK，2=存在故障）
+  required uint32 error_count   = 3; // 当前存在的故障数量
+  optional uint64 state_version = 4; // 当前状态版本
+}
+
+// @name status_report (支持全量/增量推送)
+// @cmd 1002
+message m_1002_toc {
+  // 按钮、灯光、马达状态
+  repeated ButtonState buttons = 1;
+  repeated LightState  lights  = 2;
+  repeated MotorStatus motors  = 3;
+
+  // 版本与差量相关
+  required BoolFlag is_full_snapshot    = 10; // 1=全量，2=增量
+  required uint64 state_version         = 11; // 与版本号对齐，每次状态变化 +1
+  optional uint64 change_mask           = 12; // bit0=buttons, bit1=lights, bit2=motors, bit3=faults, bit4=counter/payout
+  repeated string changed_fields        = 13; // 精细字段名（如 "lights[3]")
+  repeated ChangeField changed_categories = 14; // 更结构化的变更类别
+}
+
+// @name button_event
+// @cmd 1003
+message m_1003_toc {
+  required uint32 button_id   = 1; // 按钮 ID（0~15）
+  required ButtonAction action= 2; // 按下/抬起
+  optional uint32 duration_ms = 3; // 按下持续时间（抬起事件可填充，用于判定长按/防抖）
+}
+
+// @name coin_in_event
+// @cmd 1004
+message m_1004_toc {
+  required uint32 channel_id   = 1; // 通道 ID（如多通道投币器）
+  optional uint32 coin_value   = 2; // 面值
+  required uint32 quantity     = 3; // 本次币数
+  optional uint64 total        = 4; // 总累计（对账/补偿丢包）
+}
+
+// @name payout_count_event
+// @cmd 1005
+message m_1005_toc {
+  required uint32 delta = 1; // 本次新增的币数量
+  required uint32 total = 2; // 本局累计
+}
+
+// @name fault_event
+// @cmd 1006
+message m_1006_toc {
+  required HardwareType  hardware_type  = 1; // 出问题的硬件类型
+  optional uint32        hardware_id    = 2; // 硬件编号，如灯/按钮索引
+  required FaultSeverity severity       = 3; // 严重程度
+  optional uint32        fault_code     = 4; // 自定义码
+  optional string        message        = 5; // 简短错误说明
+  optional uint64        state_version  = 6; // 触发该故障时的状态版本
+  optional FaultCode     fault          = 7; // 标准化故障码
+}
+
+// @name command_result
+// @cmd 1007
+message m_1007_toc {
+  required uint32 seq           = 1; // 对应请求 Header/transport 序列
+  required BoolFlag ok          = 2; // 1=成功，2=失败
+  optional uint32 error_code    = 3; // 0=成功，其它为错误码
+  optional string message       = 4; // 错误或提示信息
+  optional uint64 state_version = 5; // 执行后最新状态版本
+}
+
+//====================================
+// 客户端 -> STM32 (tos)
+//====================================
+
+// @name request_status / subscribe
+// @cmd 2001
+message m_2001_tos {
+  optional BoolFlag full                 = 1; // 1=要求完整状态，2=增量
+  optional BoolFlag subscribe_changes    = 2; // 1=订阅后续变化推送
+  optional uint32 min_interval_ms    = 3; // 推送最小间隔（0=不节流）
+  optional BoolFlag send_full_on_subscribe = 4; // 1=订阅时立即推送全量一次
+}
+
+// @name light_command
+// @cmd 2002
+message m_2002_tos {
+  repeated SingleLightCommand lights = 1; // 一次可控制多个灯
+}
+
+// @name motor_command
+// @cmd 2003
+message m_2003_tos {
+  required MotorType        motor_type  = 1; // 哪个马达
+  required MotorCommandType command     = 2; // START / STOP / RUN_TIME / RUN_COUNT
+  optional uint32 duration_ms           = 3; // RUN_TIME 模式
+  optional uint32 count                 = 4; // RUN_COUNT 模式
+  optional uint32 speed_level           = 5; // 0=默认，1~N 不同速度
+}
+
+// @name clear_fault
+// @cmd 2004
+message m_2004_tos {
+  optional HardwareType hardware_type = 1; // 要复位哪个硬件，缺省=全部
+  optional uint32       hardware_id   = 2; // 具体 ID，缺省/不填=全部
+}
+
+// @name simulate_fault (联调/压测)
+// @cmd 2005
+message m_2005_tos {
+  repeated SimulatedFault faults = 1; // 一次可注入多个故障
+}
+
+//====================================
+// 共享结构体
+//====================================
+
+message ButtonState {
+  required uint32 button_id = 1; // 1~15（避免 0）
+  required BoolFlag pressed = 2; // 当前是否按下（1=按下，2=未按）
+}
+
+message LightState {
+  required uint32 light_id = 1; // 1~15（避免 0）
+  required BoolFlag on    = 2; // 开/关（1=开，2=关）
+  optional uint32 pattern = 3; // 闪烁模式 ID（0=常亮，1=闪烁，2=跑马灯…）
+}
+
+message MotorStatus {
+  required MotorType motor_type   = 1;
+  required BoolFlag  running      = 2;   // 是否正在运行（1=运行，2=停止）
+  optional uint32    remaining_ms = 3;   // RUN_TIME 模式剩余时间
+  optional uint32    remaining_count = 4; // RUN_COUNT 模式剩余数量
+  optional uint32    speed_level  = 5;   // 当前速度
+}
+
+message SingleLightCommand {
+  required uint32 light_id = 1; // 1~15（避免 0）
+  required BoolFlag on     = 2; // 开/关（1=开，2=关）
+  optional uint32 pattern  = 3; // 模式（0=默认）
+}
+
+message SimulatedFault {
+  required HardwareType  hardware_type = 1;
+  optional uint32        hardware_id   = 2;
+  required FaultSeverity severity      = 3;
+  optional uint32        fault_code    = 4;
+  optional string        message       = 5;
+  optional FaultCode     fault         = 6;
+}
