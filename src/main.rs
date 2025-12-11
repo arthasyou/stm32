@@ -11,6 +11,10 @@ static HEAP: Heap = Heap::empty();
 
 mod error;
 mod net;
+mod event;
+mod drivers;
+mod tasks;
+mod app;
 
 use defmt::info;
 use embassy_executor::Spawner;
@@ -22,47 +26,9 @@ use {defmt_rtt as _, panic_probe as _};
 use net::{PacketCodec, PacketType, Router};
 use heapless::Vec;
 
-// 包含 protobuf 生成的代码
-pub mod coinpusher {
-    pub mod v1 {
-        include!(concat!(env!("OUT_DIR"), "/coinpusher.v1.rs"));
-    }
-}
-
-use coinpusher::v1::*;
-
-// 命令码定义
-const CMD_REQUEST_STATUS: u16 = 2001;
-const CMD_LIGHT_COMMAND: u16 = 2002;
-const CMD_MOTOR_COMMAND: u16 = 2003;
-
-// 简化的 handler（演示用）
-fn handle_test_proto(data: Vec<u8, 512>) -> error::Result<Vec<u8, 512>> {
-    info!("Protobuf handler called with {} bytes", data.len());
-
-    // 尝试解析为 protobuf 消息
-    // TODO: 实际解析和处理
-
-    let mut response = Vec::new();
-    response.extend_from_slice(b"OK").ok();
-    Ok(response)
-}
-
-// 创建完整的路由表
-fn setup_router() -> Router {
-    let mut router = Router::new();
-
-    // 注册测试处理器
-    router.add_route(CMD_REQUEST_STATUS, handle_test_proto);
-    router.add_route(CMD_LIGHT_COMMAND, handle_test_proto);
-    router.add_route(CMD_MOTOR_COMMAND, handle_test_proto);
-
-    info!("Router initialized with protobuf support");
-    router
-}
 
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) -> ! {
     // 初始化堆内存 (32KB)
     {
         use core::mem::MaybeUninit;
@@ -78,58 +44,44 @@ async fn main(_spawner: Spawner) -> ! {
     let config = Config::default();
     let _p = embassy_stm32::init(config);
 
-    info!("=== Coin Pusher Protocol Test (Protobuf) ===");
+    info!("=== Coin Pusher System (Event-Driven Architecture) ===");
+    info!("Initializing...");
     info!("");
 
-    // 创建路由器
-    let router = setup_router();
+    // 创建事件通道
+    use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
+    use embassy_sync::channel::Channel;
+    use event::Event;
 
-    // 测试 protobuf 消息
-    test_protobuf_messages();
+    static EVENT_CHANNEL: static_cell::StaticCell<Channel<CriticalSectionRawMutex, Event, 32>> =
+        static_cell::StaticCell::new();
+
+    let event_channel = EVENT_CHANNEL.init(Channel::new());
+    let event_tx = event_channel.sender();
+    let event_rx = event_channel.receiver();
+
+    info!("Event system initialized");
+
+    // 启动所有任务
+    info!("Spawning tasks...");
+
+    spawner.spawn(tasks::button_task::button_task(event_tx.clone())).unwrap();
+    info!("  - Button task spawned");
+
+    spawner.spawn(tasks::heartbeat_task::heartbeat_task(event_tx.clone())).unwrap();
+    info!("  - Heartbeat task spawned");
+
+    spawner.spawn(tasks::dispatch_task::dispatch_task(event_rx)).unwrap();
+    info!("  - Dispatch task spawned");
 
     info!("");
-    info!("=== Protobuf system ready ===");
-    info!("Waiting for TCP connections...");
+    info!("=== System ready ===");
+    info!("Event-driven architecture running...");
     info!("");
 
+    // 主任务空转
     loop {
-        info!("Heartbeat...");
-        Timer::after_secs(5).await;
+        Timer::after_secs(60).await;
+        info!("Main: System running...");
     }
 }
-
-/// 测试 protobuf 消息
-fn test_protobuf_messages() {
-    use prost::Message;
-
-    info!("Test: Protobuf Messages");
-
-    // 测试心跳消息
-    info!("  Testing Heartbeat message...");
-    let heartbeat = M1001Toc {
-        uptime_ms: 12345,
-        all_ok: BoolFlag::BoolTrue as i32,
-        error_count: 0,
-        state_version: Some(1),
-    };
-
-    let mut buf = alloc::vec::Vec::new();
-    heartbeat.encode(&mut buf).ok();
-    info!("    ✓ Heartbeat encoded: {} bytes", buf.len());
-
-    // 测试按钮事件
-    info!("  Testing ButtonEvent message...");
-    let button_event = M1003Toc {
-        button_id: 1,
-        action: ButtonAction::ButtonPressed as i32,
-        duration_ms: Some(100),
-    };
-
-    let mut buf = alloc::vec::Vec::new();
-    button_event.encode(&mut buf).ok();
-    info!("    ✓ ButtonEvent encoded: {} bytes", buf.len());
-
-    info!("  All protobuf tests passed!");
-    info!("");
-}
-
