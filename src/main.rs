@@ -1,6 +1,9 @@
 #![no_std]
 #![no_main]
 
+mod error;
+mod net;
+
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_stm32::Config;
