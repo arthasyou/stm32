@@ -22,9 +22,9 @@ use embassy_stm32::Config;
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
 
-// 引入 Serial Transport
-use net::{SerialTransport, SerialTransportConfig};
-use static_cell::StaticCell;
+// 引入测试需要的模块
+use net::{PacketCodec, PacketType, Router};
+use heapless::Vec;
 
 
 #[embassy_executor::main]
@@ -45,7 +45,6 @@ async fn main(spawner: Spawner) -> ! {
     let _p = embassy_stm32::init(config);
 
     info!("=== Coin Pusher System (Event-Driven Architecture) ===");
-    info!("Transport Mode: Serial (USB-to-Ethernet via External Chip)");
     info!("Initializing...");
     info!("");
 
@@ -54,8 +53,8 @@ async fn main(spawner: Spawner) -> ! {
     use embassy_sync::channel::Channel;
     use event::Event;
 
-    static EVENT_CHANNEL: StaticCell<Channel<CriticalSectionRawMutex, Event, 32>> =
-        StaticCell::new();
+    static EVENT_CHANNEL: static_cell::StaticCell<Channel<CriticalSectionRawMutex, Event, 32>> =
+        static_cell::StaticCell::new();
 
     let event_channel = EVENT_CHANNEL.init(Channel::new());
     let event_tx = event_channel.sender();
@@ -75,40 +74,9 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(tasks::dispatch_task::dispatch_task(event_rx)).unwrap();
     info!("  - Dispatch task spawned");
 
-    // ========== 启动 Serial Transport（新增）==========
-
-    // 创建 Serial Transport 配置
-    let serial_config = SerialTransportConfig {
-        read_timeout: embassy_time::Duration::from_secs(30),
-        mock_mode: true,  // Demo 模式，接入真实硬件时改为 false
-    };
-
-    // 使用 StaticCell 创建静态实例
-    static SERIAL_TRANSPORT: StaticCell<SerialTransport> = StaticCell::new();
-    let serial_transport = SERIAL_TRANSPORT.init(SerialTransport::new(serial_config));
-
-    // 定义 Serial Transport Task
-    #[embassy_executor::task]
-    async fn serial_transport_task(
-        transport: &'static SerialTransport,
-        event_tx: embassy_sync::channel::Sender<
-            'static,
-            CriticalSectionRawMutex,
-            Event,
-            32,
-        >,
-    ) -> ! {
-        transport.start(event_tx).await
-    }
-
-    // 启动 Serial Transport Task
-    spawner.spawn(serial_transport_task(serial_transport, event_tx.clone())).unwrap();
-    info!("  - Serial Transport task spawned (MOCK mode)");
-
     info!("");
     info!("=== System ready ===");
-    info!("Event-driven architecture running with Serial Transport...");
-    info!("Waiting for serial data (mock: every 5 seconds)...");
+    info!("Event-driven architecture running...");
     info!("");
 
     // 主任务空转
